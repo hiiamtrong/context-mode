@@ -324,6 +324,7 @@ interface PiRenderTheme {
 
 interface PiRenderContext {
   lastComponent?: unknown;
+  isError?: boolean;
 }
 
 export function createContextModeCallRenderer(toolName: string) {
@@ -387,10 +388,14 @@ export function createContextModeResultRenderer(toolName: string) {
       .reverse()
       .find((line) => line.trim().length > 0)
       ?.trim();
+    // A failure's reason is the one thing the collapsed view must not drop, so
+    // errors skip the 180-char cap that would turn a long reason into "completed".
     const status =
-      lastLine && lastLine.length <= 180
-        ? lastLine
-        : `${toolName} completed`;
+      context.isError && display.trim()
+        ? display.trim()
+        : lastLine && lastLine.length <= 180
+          ? lastLine
+          : `${toolName} completed`;
     text.setText(formatCtxOutput(theme, status));
     return text;
   };

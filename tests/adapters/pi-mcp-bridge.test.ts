@@ -82,6 +82,19 @@ describe("createContextModeResultRenderer", () => {
       expect(component.render(200)).toEqual(expected);
     }
   });
+
+  it("keeps a long error whole instead of collapsing it to '<tool> completed'", async () => {
+    const { createContextModeResultRenderer } = await import("../../src/adapters/pi/mcp-bridge.js");
+    const render = createContextModeResultRenderer("ctx_execute");
+    const theme = { bold: (value: string) => `*${value}*`, fg: (color: string, value: string) => `[${color}]${value}` };
+    const longLine = `blocked: ${"reason ".repeat(40)}`.trim();
+    const result = { content: [{ type: "text", text: longLine }] };
+    const collapsed = { expanded: false, isPartial: false };
+    const render200 = (context: object) => (render(result, collapsed, theme, context) as { render: (width: number) => string[] }).render(1000);
+
+    expect(render200({ isError: true })).toEqual(["", "[toolTitle]*output*", `[text]${longLine}`]);
+    expect(render200({ isError: false })).toEqual(["", "[toolTitle]*output*", "[text]ctx_execute completed"]);
+  });
 });
 
 describe("stripContextModeAuditEcho", () => {
