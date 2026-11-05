@@ -210,7 +210,9 @@ async function handler(raw: ExecuteInput, ctx: ToolContext): Promise<ToolReply> 
       return { text: BACKGROUND_REPLY_PREFIX + pid, isError: false, sandboxBytes: 0, journal };
     }
     // Steps 8, 10, 11.
-    const r = await runProcess(argv, { cwd, env, signal: ctx.signal, timeoutMs });
+    const decoder = new TextDecoder();
+    const onChunk = ctx.onProgress && ((c: Buffer) => ctx.onProgress?.(decoder.decode(c, { stream: true })));
+    const r = await runProcess(argv, { cwd, env, signal: ctx.signal, timeoutMs, onChunk });
     if (r.killed === "timeout") return fail(new CtxError("TIMEOUT", { ms: timeoutMs }).toLine(), journal);
     if (r.killed === "cancel") return fail(CANCELLED_LINE, journal);
     // D-M2-T10-4: no exit code = the process did not start (deleted cwd, runtime gone) or died by an

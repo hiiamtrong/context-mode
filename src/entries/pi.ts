@@ -31,7 +31,7 @@ export interface PiTool {
   label: string;
   description: string;
   parameters: unknown;
-  execute(toolCallId: string, params: unknown, signal?: AbortSignal): Promise<PiToolResult>;
+  execute(toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: (partial: PiToolResult) => void): Promise<PiToolResult>;
 }
 
 /** The Pi extension API surface this file uses. */
@@ -93,7 +93,8 @@ export default function piExtension(pi: PiApi): void {
     return project;
   }
 
-  async function runTool(tool: RegisteredTool<unknown>, params: unknown, signal: AbortSignal | undefined): Promise<ToolReply> {
+  async function runTool(tool: RegisteredTool<unknown>, params: unknown, signal: AbortSignal | undefined, onUpdate?: (partial: PiToolResult) => void): Promise<ToolReply> {
+    let partial = "";
     const checked = checkCall(tool, params);
     if (!checked.ok) return { text: checked.line, isError: true, sandboxBytes: 0 };
     const ctx: ToolContext = {
@@ -104,6 +105,8 @@ export default function piExtension(pi: PiApi): void {
       turn,
       // #1182: Pi's abort signal reaches the handler, which kills the process tree and replies "Cancelled.".
       signal: signal ?? new AbortController().signal,
+      // Live output: each chunk grows the partial result Pi shows while the tool is still running.
+      onProgress: onUpdate && ((text) => { partial += text; onUpdate({ content: [{ type: "text", text: partial }], details: {} }); }),
       protocolVersion: "",
     };
     let reply: ToolReply;
@@ -123,7 +126,7 @@ export default function piExtension(pi: PiApi): void {
       label: tool.name,
       description: tool.description,
       parameters: z.toJSONSchema(tool.schema),
-      execute: async (_toolCallId, params, signal) => toPi(await runTool(tool, params, signal)),
+      execute: async (_toolCallId, params, signal, onUpdate) => toPi(await runTool(tool, params, signal, onUpdate)),
     };
   }
 

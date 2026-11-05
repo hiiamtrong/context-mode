@@ -11,6 +11,7 @@ export interface RunOptions {
   signal: AbortSignal;
   timeoutMs: number;
   stdin?: string;
+  onChunk?: (chunk: Buffer) => void; // live output for a host that streams (Pi)
 }
 
 export interface RunResult {
@@ -87,8 +88,14 @@ export function runProcess(argv: string[], o: RunOptions): Promise<RunResult> {
       });
     };
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      o.onChunk?.(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      o.onChunk?.(chunk);
+    });
     // DEVIATIONS D-M2-T4-3: "close" (exit + stdio drained), so no tail bytes are lost.
     child.on("close", (code: number | null) => settle(code));
     // Step 7: spawn-level failure (ENOENT argv[0], missing cwd) resolves, never rejects.
