@@ -11627,7 +11627,7 @@ var DECISION_ANSWERS_KEY = "answers";
 var DECISION_OPTION_KEY = "option";
 var DECISION_LABEL_JOIN = " | ";
 var RELEASE_REPO_URL = "https://github.com/mksglu/context-mode.git";
-var BUNDLE_SHA = true ? "467b4c9c71ffb958dcf848291adf65f5ae806738" : void 0;
+var BUNDLE_SHA = true ? "c262a4855bf4002566835511f7b65ae874c47960" : void 0;
 var DOCTOR_CHECK_ORDER = Object.freeze(["D1", "D2", "D3", "D4", "D5", "D5b", "D6", "D7", "D8", "D9", "D10", "D11"]);
 var DOCTOR_LABEL = Object.freeze({
   D1: "version",
@@ -24731,13 +24731,17 @@ var real2 = (p) => {
     return path4.resolve(p);
   }
 };
+function refAt(s) {
+  for (let i = 1; i < s.length; i += 1) if (s[i] === "@" && s[i - 1] !== "/") return i;
+  return -1;
+}
 function sourceName(source) {
   let s = source;
   for (const p of SOURCE_PREFIXES) if (s.startsWith(p)) s = s.slice(p.length);
+  const at2 = refAt(s);
+  if (at2 > 0) s = s.slice(0, at2);
   const last2 = s.split("/").pop() ?? "";
-  const at2 = last2.indexOf("@", 1);
-  const name = at2 > 0 ? last2.slice(0, at2) : last2;
-  return name.endsWith(".git") ? name.slice(0, -4) : name;
+  return last2.endsWith(".git") ? last2.slice(0, -4) : last2;
 }
 function isOwn(source, pkgDir) {
   if (typeof source !== "string") return false;

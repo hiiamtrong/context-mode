@@ -81,12 +81,17 @@ const REMOVED_PATHS = [
 // TECH-SPEC §3.10: the `openclaw` key in package.json.
 const REMOVED_PACKAGE_KEYS = ["openclaw"];
 
+// Pi installs a git source by cloning the repo root and reading package.json's `pi` field, so unlike every other host it
+// cannot read the built copy under plugins/claude-code/: the pi entry and the runtime files it starts sit at the root.
+const PI_PACKAGE_DIR = "pi/";
+const PI_PACKAGE_FILES = ["server.mjs", "run.mjs", "search.mjs", "hook.mjs"];
 // GS5: no SKILL.md other than these, and no file with one of these base names.
 const ALLOWED_SKILL_FILES = [
   "skills/ctx-stats/SKILL.md",
   "skills/ctx-doctor/SKILL.md",
   "skills/ctx-upgrade/SKILL.md",
   ".claude/skills/release/SKILL.md",
+  ...["ctx-stats", "ctx-doctor", "ctx-upgrade"].map((n) => PI_PACKAGE_DIR + "skills/" + n + "/SKILL.md"),
 ];
 // D-REL-MAIN-VERSION-1: the release commit (scripts/release/commit-main.mjs, build/main-tree.mjs) tracks the built plugin
 // under plugins/claude-code/ with the 3 rendered skill copies build.mjs ships (skills/ for Claude Code, Gemini and Qwen,
@@ -115,6 +120,7 @@ const ALLOWED_DIRS = [
   "docs/architecture/", "docs/install/",
   "docs/assets/readme/", // README figures and their sources (D-README-THESIS-1)
   "scripts/release/",
+  PI_PACKAGE_DIR,
   ".github/",
   ".claude-plugin/", ".codex-plugin/", ".agents/plugins/",
   MAIN_TREE_PLUGIN_DIR,
@@ -135,6 +141,7 @@ const ALLOWED_FILES = [
   "docs/how-it-works.md", "docs/tools.md", "docs/algorithms.md", "docs/performance.md", "docs/UPSTREAM-CREDITS.md",
   // Root files.
   "README.md", "CONTRIBUTING.md", "LICENSE", "stats.json", "package.json", "tsconfig.json", ".gitignore", ".gitattributes",
+  ...PI_PACKAGE_FILES,
   ...MAIN_TREE_FILES,
 ];
 

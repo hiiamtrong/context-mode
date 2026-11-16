@@ -314,6 +314,37 @@ describe("ADR-0015 repo: removed-file gate (allow-list)", () => {
   });
 });
 
+// Pi installs a git source from the repository root, so pi/index.js and the runtime files it starts are build output
+// committed here. Rebuild them: a source change without a rebuild ships a bundle that does not match src.
+describe("repo: the committed pi package is a build of this source", () => {
+  const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const FILES = ["pi/index.js", "server.mjs", "run.mjs", "search.mjs", "hook.mjs"];
+
+  // The one run of 40+ hex chars in a bundle is BUNDLE_SHA, the --sha the build was given.
+  function bundledSha(text) {
+    const hex = "0123456789abcdef";
+    let run = "";
+    for (const c of text) {
+      run = hex.includes(c) ? run + c : "";
+      if (run.length === 40) return run;
+    }
+    return undefined;
+  }
+
+  test("pi/index.js and its runtime files equal a fresh build of src", () => {
+    const pkg = JSON.parse(readFileSync(path.join(REPO, "package.json"), "utf8"));
+    const sha = bundledSha(readFileSync(path.join(REPO, "pi/index.js"), "utf8"));
+    assert.ok(sha, "pi/index.js carries no 40-char commit sha");
+    const out = mkdtempSync(path.join(tmpdir(), "cm-pi-build-"));
+    const r = spawnSync(process.execPath, [path.join(REPO, "build", "build.mjs"), "--out", out, "--version", pkg.version, "--sha", sha], { cwd: REPO, encoding: "utf8", windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    for (const f of FILES) {
+      assert.ok(readFileSync(path.join(out, f)).equals(readFileSync(path.join(REPO, f))), f + " is stale: rebuild the package with node build/build.mjs and commit the output");
+    }
+    rmSync(out, { recursive: true, force: true });
+  });
+});
+
 describe("ADR-0015 repo: secrets gate", () => {
   // build/check-secrets.mjs: no gateway tenant id (t_ + 8 hex) in a tracked text file (D-FU-OI-TENANT-1).
   // Each case runs the real script in a throwaway git repo. The ids below are built from parts, so this file holds none.
