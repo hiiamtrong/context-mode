@@ -1,6 +1,14 @@
 {
   "name": "context-mode",
   "version": "2.2.0",
+  "pi": {
+    "extensions": [
+      "./pi/index.js"
+    ],
+    "skills": [
+      "./pi/skills"
+    ]
+  },
   "type": "module",
   "description": "Context window saver for 11 coding agents. Local and free: sandboxed code execution, FTS5 search, session continuity.",
   "author": "Mert Koseoglu",
