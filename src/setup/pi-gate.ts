@@ -31,14 +31,21 @@ function load(file: string): Source | undefined {
 
 const real = (p: string): string => { try { return realpathSync(p); } catch { return path.resolve(p); } };
 
+/** Index of the @ that opens a version/ref, else -1. A ref may contain "/" (".../context-mode@port/v2"), so the ref comes off
+ *  the whole source first; an @ right after "/" or at index 0 opens a path segment (an npm scope) and is not a ref. */
+function refAt(s: string): number {
+  for (let i = 1; i < s.length; i += 1) if (s[i] === "@" && s[i - 1] !== "/") return i;
+  return -1;
+}
+
 /** Last path segment of a packages[] source without a scheme, a @version/@ref or .git: "git:github.com/a/context-mode@release" -> "context-mode". */
 function sourceName(source: string): string {
   let s = source;
   for (const p of SOURCE_PREFIXES) if (s.startsWith(p)) s = s.slice(p.length);
+  const at = refAt(s);
+  if (at > 0) s = s.slice(0, at);
   const last = s.split("/").pop() ?? "";
-  const at = last.indexOf("@", 1);
-  const name = at > 0 ? last.slice(0, at) : last;
-  return name.endsWith(".git") ? name.slice(0, -4) : name;
+  return last.endsWith(".git") ? last.slice(0, -4) : last;
 }
 
 function isOwn(source: unknown, pkgDir: string): boolean {

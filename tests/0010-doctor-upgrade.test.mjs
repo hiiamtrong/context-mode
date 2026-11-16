@@ -300,6 +300,25 @@ describe("ADR-0010 doctor D3, D4, D5b: host config, double fire, v1 leftovers", 
     });
   }
 
+  test("[D-R38-PI-D3-1] doctor-config/D3-pi a git ref containing a slash is still our package", (t) => {
+    const home = tmp(t);
+    const dir = path.join(home, ".pi", "agent");
+    for (const spec of ["git:github.com/hiiamtrong/context-mode@port/v2.2.0-patch", "git:github.com/a/context-mode@feat/x.git"]) {
+      piSettings(dir, [spec]);
+      const d3 = checkHostConfig(getAdapter("pi"), { HOME: home, USERPROFILE: home }, home);
+      assert.equal(d3.status, "PASS", `${spec}: ${d3.detail}`);
+    }
+  });
+
+  test("[D-R38-PI-D3-1] doctor-config/D3-pi a slash ref on someone else's package is FAIL", (t) => {
+    const home = tmp(t);
+    const custom = tmp(t);
+    piSettings(custom, ["git:github.com/hiiamtrong/not-context-mode@port/v2.2.0-patch"]);
+    const d3 = checkHostConfig(getAdapter("pi"), { HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: custom }, home);
+    assert.equal(d3.status, "FAIL", d3.detail);
+    assert.ok(d3.detail.startsWith("wrong: MCP entry"), d3.detail);
+  });
+
   test("[D-R38-PI-D3-1] doctor-config/D3-pi `pi install -l` project entry is PASS and names the project file", (t) => {
     const home = tmp(t);
     const repo = tmp(t);
