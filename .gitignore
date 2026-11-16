@@ -10,6 +10,7 @@ node_modules/
 !/build/hash.mjs
 !/build/manifests.ts
 !/build/main-tree.mjs
+!/build/pi-package.mjs
 !/build/readme-agents.mjs
 !/build/readme-links.mjs
 !/build/readme.mjs

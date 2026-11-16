@@ -12,6 +12,7 @@ import ts from "typescript";
 import { HOOK_WORDS, LINE_PREFIX, agentRows, checkAgentLines, renderAgentBlocks, renderAgentLines, writeAgentLines } from "../build/readme-agents.mjs";
 import { installWithRetry, missingPackages } from "../scripts/ci-install.mjs";
 import { ADAPTERS } from "../src/adapters/table.ts";
+import { PI_PACKAGE_DIR, PI_PACKAGE_FILES, PI_SKILL_FILES } from "../build/pi-package.mjs";
 import { AGENT_IDS } from "../src/core/contracts/agents.ts";
 import { DOCTOR_CHECK_ORDER, REPORT_CAP, REPORT_SOURCE_LABEL } from "../src/core/contracts/constants.ts";
 
@@ -318,8 +319,7 @@ describe("ADR-0015 repo: removed-file gate (allow-list)", () => {
 // committed here. Rebuild them: a source change without a rebuild ships a bundle that does not match src.
 describe("repo: the committed pi package is a build of this source", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const FILES = ["pi/index.js", "server.mjs", "run.mjs", "search.mjs", "hook.mjs",
-    ...["ctx-stats", "ctx-doctor", "ctx-upgrade"].map((n) => "pi/skills/" + n + "/SKILL.md")];
+  const FILES = [PI_PACKAGE_DIR + "index.js", ...PI_PACKAGE_FILES, ...PI_SKILL_FILES];
 
   // The one run of 40+ hex chars in a bundle is BUNDLE_SHA, the --sha the build was given.
   function bundledSha(text) {

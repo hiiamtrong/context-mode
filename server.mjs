@@ -28448,7 +28448,7 @@ function PURGE_SUMMARY(rows, scope) {
 var DECISION_SOURCE = "decision";
 var DECISION_USER_LABEL = "decision (user)";
 var RELEASE_REPO_URL = "https://github.com/mksglu/context-mode.git";
-var BUNDLE_SHA = true ? "db70ad86cf94338e77c81918e63a9adebcb7583e" : void 0;
+var BUNDLE_SHA = true ? "eee66b9e92488ba959d9e2feaa6a62e213110090" : void 0;
 var DOCTOR_CHECK_ORDER = Object.freeze(["D1", "D2", "D3", "D4", "D5", "D5b", "D6", "D7", "D8", "D9", "D10", "D11"]);
 var DOCTOR_LABEL = Object.freeze({
   D1: "version",
@@ -49260,7 +49260,6 @@ var EXTENSIONS_KEY = "extensions";
 var PROJECT_DIR = ".pi";
 var TRUST_FILE = "trust.json";
 var ALWAYS = "always";
-var SOURCE_PREFIXES = ["npm:", "git:"];
 function load(file2) {
   if (!existsSync9(file2)) return void 0;
   try {
@@ -49276,28 +49275,17 @@ var real2 = (p) => {
     return path4.resolve(p);
   }
 };
-function refAt(s) {
-  for (let i = 1; i < s.length; i += 1) {
-    if (s[i] !== "@" || s[i - 1] === "/") continue;
-    const rest = s.slice(i + 1);
-    const colon = rest.indexOf(":");
-    const slash = rest.indexOf("/");
-    if (colon >= 0 && (slash < 0 || colon < slash)) continue;
-    return i;
-  }
-  return -1;
-}
-function sourceName(source) {
-  let s = source;
-  for (const p of SOURCE_PREFIXES) if (s.startsWith(p)) s = s.slice(p.length);
-  const at = refAt(s);
-  if (at > 0) s = s.slice(0, at);
-  const last2 = s.split("/").pop() ?? "";
-  return last2.endsWith(".git") ? last2.slice(0, -4) : last2;
-}
 function isOwn(source, pkgDir) {
   if (typeof source !== "string") return false;
-  return real2(source) === real2(pkgDir) || sourceName(source) === SERVER_KEY;
+  if (real2(source) === real2(pkgDir)) return true;
+  for (const sep3 of ["/", "\\", ":"]) {
+    const at = source.indexOf(sep3 + SERVER_KEY);
+    if (at < 0) continue;
+    const rest = source.slice(at + sep3.length + SERVER_KEY.length);
+    const tail = rest.startsWith(".git") ? rest.slice(4) : rest;
+    if (tail === "" || tail.startsWith("@") || tail.startsWith("#")) return true;
+  }
+  return source === SERVER_KEY;
 }
 function ownEntries(src, pkgDir) {
   const list3 = hostConfigValueAt(src.doc, [PI_PACKAGES_KEY]);

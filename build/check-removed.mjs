@@ -10,6 +10,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { PI_PACKAGE_DIR, PI_PACKAGE_FILES, PI_SKILL_FILES } from "./pi-package.mjs";
+
 // One entry per removed path. kind "file": exact path. kind "dir": every tracked path under it.
 // kind "glob": prefix + anything + suffix (impl/15 §2.3 "configs/**/*.json", ".mcp.json*.example").
 const REMOVED_PATHS = [
@@ -81,17 +83,13 @@ const REMOVED_PATHS = [
 // TECH-SPEC §3.10: the `openclaw` key in package.json.
 const REMOVED_PACKAGE_KEYS = ["openclaw"];
 
-// Pi installs a git source by cloning the repo root and reading package.json's `pi` field, so unlike every other host it
-// cannot read the built copy under plugins/claude-code/: the pi entry and the runtime files it starts sit at the root.
-const PI_PACKAGE_DIR = "pi/";
-const PI_PACKAGE_FILES = ["server.mjs", "run.mjs", "search.mjs", "hook.mjs"];
 // GS5: no SKILL.md other than these, and no file with one of these base names.
 const ALLOWED_SKILL_FILES = [
   "skills/ctx-stats/SKILL.md",
   "skills/ctx-doctor/SKILL.md",
   "skills/ctx-upgrade/SKILL.md",
   ".claude/skills/release/SKILL.md",
-  ...["ctx-stats", "ctx-doctor", "ctx-upgrade"].map((n) => PI_PACKAGE_DIR + "skills/" + n + "/SKILL.md"),
+  ...PI_SKILL_FILES,
 ];
 // D-REL-MAIN-VERSION-1: the release commit (scripts/release/commit-main.mjs, build/main-tree.mjs) tracks the built plugin
 // under plugins/claude-code/ with the 3 rendered skill copies build.mjs ships (skills/ for Claude Code, Gemini and Qwen,
