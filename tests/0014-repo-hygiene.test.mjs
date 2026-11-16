@@ -318,7 +318,8 @@ describe("ADR-0015 repo: removed-file gate (allow-list)", () => {
 // committed here. Rebuild them: a source change without a rebuild ships a bundle that does not match src.
 describe("repo: the committed pi package is a build of this source", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const FILES = ["pi/index.js", "server.mjs", "run.mjs", "search.mjs", "hook.mjs"];
+  const FILES = ["pi/index.js", "server.mjs", "run.mjs", "search.mjs", "hook.mjs",
+    ...["ctx-stats", "ctx-doctor", "ctx-upgrade"].map((n) => "pi/skills/" + n + "/SKILL.md")];
 
   // The one run of 40+ hex chars in a bundle is BUNDLE_SHA, the --sha the build was given.
   function bundledSha(text) {
@@ -336,12 +337,15 @@ describe("repo: the committed pi package is a build of this source", () => {
     const sha = bundledSha(readFileSync(path.join(REPO, "pi/index.js"), "utf8"));
     assert.ok(sha, "pi/index.js carries no 40-char commit sha");
     const out = mkdtempSync(path.join(tmpdir(), "cm-pi-build-"));
-    const r = spawnSync(process.execPath, [path.join(REPO, "build", "build.mjs"), "--out", out, "--version", pkg.version, "--sha", sha], { cwd: REPO, encoding: "utf8", windowsHide: true });
-    assert.equal(r.status, 0, r.stderr);
-    for (const f of FILES) {
-      assert.ok(readFileSync(path.join(out, f)).equals(readFileSync(path.join(REPO, f))), f + " is stale: rebuild the package with node build/build.mjs and commit the output");
+    try {
+      const r = spawnSync(process.execPath, [path.join(REPO, "build", "build.mjs"), "--out", out, "--version", pkg.version, "--sha", sha], { cwd: REPO, encoding: "utf8", windowsHide: true });
+      assert.equal(r.status, 0, r.stderr);
+      for (const f of FILES) {
+        assert.ok(readFileSync(path.join(out, f)).equals(readFileSync(path.join(REPO, f))), f + " is stale: rebuild the package with node build/build.mjs and commit the output");
+      }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
     }
-    rmSync(out, { recursive: true, force: true });
   });
 });
 
@@ -1947,7 +1951,7 @@ describe("ADR-0015 repo: README thesis, links and figures (D-README-THESIS-1)", 
     assert.ok(kbRows.length >= 4, "use-case labels name sizes");
     for (const row of kbRows) {
       const cells = row.split("|").map((c) => c.trim());
-      const kb = Number(cells[1].split(" ").find((w, i, a) => a[i + 1] === "KB"));
+      const kb = Number(cells[1].split(" ").find((_w, i, a) => a[i + 1] === "KB"));
       const raw = Number(cells[3].split(" ")[0].split(",").join(""));
       assert.equal(kb, Math.round(raw / 1024), `${cells[1]}: label says ${kb} KB, raw is ${raw} B`);
     }

@@ -11627,7 +11627,7 @@ var DECISION_ANSWERS_KEY = "answers";
 var DECISION_OPTION_KEY = "option";
 var DECISION_LABEL_JOIN = " | ";
 var RELEASE_REPO_URL = "https://github.com/mksglu/context-mode.git";
-var BUNDLE_SHA = true ? "c262a4855bf4002566835511f7b65ae874c47960" : void 0;
+var BUNDLE_SHA = true ? "db70ad86cf94338e77c81918e63a9adebcb7583e" : void 0;
 var DOCTOR_CHECK_ORDER = Object.freeze(["D1", "D2", "D3", "D4", "D5", "D5b", "D6", "D7", "D8", "D9", "D10", "D11"]);
 var DOCTOR_LABEL = Object.freeze({
   D1: "version",
@@ -24732,7 +24732,14 @@ var real2 = (p) => {
   }
 };
 function refAt(s) {
-  for (let i = 1; i < s.length; i += 1) if (s[i] === "@" && s[i - 1] !== "/") return i;
+  for (let i = 1; i < s.length; i += 1) {
+    if (s[i] !== "@" || s[i - 1] === "/") continue;
+    const rest = s.slice(i + 1);
+    const colon = rest.indexOf(":");
+    const slash = rest.indexOf("/");
+    if (colon >= 0 && (slash < 0 || colon < slash)) continue;
+    return i;
+  }
   return -1;
 }
 function sourceName(source) {
