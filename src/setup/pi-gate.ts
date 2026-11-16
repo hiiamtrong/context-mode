@@ -32,9 +32,17 @@ function load(file: string): Source | undefined {
 const real = (p: string): string => { try { return realpathSync(p); } catch { return path.resolve(p); } };
 
 /** Index of the @ that opens a version/ref, else -1. A ref may contain "/" (".../context-mode@port/v2"), so the ref comes off
- *  the whole source first; an @ right after "/" or at index 0 opens a path segment (an npm scope) and is not a ref. */
+ *  the whole source first. Not a ref: an @ at index 0 or right after "/" (an npm scope), and an @ inside the ssh form
+ *  "user@host:path" (a ":" before the next "/"). */
 function refAt(s: string): number {
-  for (let i = 1; i < s.length; i += 1) if (s[i] === "@" && s[i - 1] !== "/") return i;
+  for (let i = 1; i < s.length; i += 1) {
+    if (s[i] !== "@" || s[i - 1] === "/") continue;
+    const rest = s.slice(i + 1);
+    const colon = rest.indexOf(":");
+    const slash = rest.indexOf("/");
+    if (colon >= 0 && (slash < 0 || colon < slash)) continue;
+    return i;
+  }
   return -1;
 }
 

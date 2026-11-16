@@ -300,10 +300,10 @@ describe("ADR-0010 doctor D3, D4, D5b: host config, double fire, v1 leftovers", 
     });
   }
 
-  test("[D-R38-PI-D3-1] doctor-config/D3-pi a git ref containing a slash is still our package", (t) => {
+  test("[D-R38-PI-D3-1] doctor-config/D3-pi a ref containing a slash or an ssh source is still our package", (t) => {
     const home = tmp(t);
     const dir = path.join(home, ".pi", "agent");
-    for (const spec of ["git:github.com/hiiamtrong/context-mode@port/v2.2.0-patch", "git:github.com/a/context-mode@feat/x.git"]) {
+    for (const spec of ["git:github.com/hiiamtrong/context-mode@port/v2.2.0-patch", "git:github.com/a/context-mode@feat/x.git", "git:git@github.com:owner/context-mode", "git@github.com:owner/context-mode.git"]) {
       piSettings(dir, [spec]);
       const d3 = checkHostConfig(getAdapter("pi"), { HOME: home, USERPROFILE: home }, home);
       assert.equal(d3.status, "PASS", `${spec}: ${d3.detail}`);
