@@ -5,19 +5,20 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
-import { DECISION_SOURCE, DECISION_USER_LABEL, ECHO_MAX_BYTES, EXEC_TIMEOUT_MS, OUTPUT_CAP } from "../contracts/constants.ts";
+import { DECISION_SOURCE, DECISION_USER_LABEL, EXEC_TIMEOUT_MS, OUTPUT_CAP } from "../contracts/constants.ts";
 import { CtxError } from "../contracts/errors.ts";
-import type { CtxIndexInput, DbHandle, ProjectContext, SourceKind, ToolContext, ToolReply } from "../contracts/types.ts";
+import type { CtxIndexInput, ProjectContext, SourceKind, ToolContext, ToolReply } from "../contracts/types.ts";
 import { walkDir } from "../index/walk.ts";
 import { isInside } from "../project/contain.ts";
 import { capBytes } from "../sandbox/cap.ts";
 import { safeFetch } from "../sandbox/fetch.ts";
+import { climbShell } from "../sandbox/ladder.ts";
 import { unknownField } from "./search.ts";
 import { closeDb, openDb } from "../store/db.ts";
 import { indexedLabelLine, pathLabel, shownLabel, sourceHandle } from "../store/fts.ts";
 import { indexText, storeText, type ChunkKind } from "../index/text.ts";
 import { hasMdStructure } from "../index/chunk.ts";
-import { htmlToReadable } from "../index/html-text.ts";
+import { htmlToReadable, isNearEmpty } from "../index/html-text.ts";
 import { RAW_LABEL_SUFFIX } from "../store/fts.ts";
 
 export type { CtxIndexInput } from "../contracts/types.ts";
@@ -92,7 +93,7 @@ function pathItems(input: CtxIndexInput & { path: string }, project: ProjectCont
   return [{ sourceKind: "path", label: pathLabel(base === "" ? input.path : base), kind: kindOfPath(abs), read: () => readUtf8(abs) }];
 }
 
-async function itemsOf(input: CtxIndexInput, ctx: ToolContext): Promise<{ items: Item[]; from: string }> {
+async function itemsOf(input: CtxIndexInput, ctx: ToolContext, signal: AbortSignal): Promise<{ items: Item[]; from: string }> {
   if (input.content !== undefined) {
     const text = input.content;
     const label = input.source ?? DEFAULT_CONTENT_LABEL;
@@ -107,7 +108,7 @@ async function itemsOf(input: CtxIndexInput, ctx: ToolContext): Promise<{ items:
   // url: safeFetch owns proxy env and the per-hop SSRF check; its CtxError is the reply (P1, one path).
   // 00 §5.2 step 3 / Q8: the handler runs under cancel and EXEC_TIMEOUT_MS, so a server that never
   // answers ends as FETCH_FAILED, not a hung call. AbortSignal.timeout does not hold the event loop.
-  const res = await safeFetch(input.url ?? "", AbortSignal.any([ctx.signal, AbortSignal.timeout(EXEC_TIMEOUT_MS)]));
+  const res = await safeFetch(input.url ?? "", signal);
   const text = res.body.toString("utf8");
   const label = res.finalUrl;
   return { items: [{ sourceKind: "url", label, kind: kindOfType(res.contentType), read: () => text, base: label }], from: label };
@@ -118,7 +119,9 @@ async function handler(input: CtxIndexInput, ctx: ToolContext): Promise<ToolRepl
   const given = INPUT_FIELDS.filter((f) => input[f] !== undefined);
   if (given.length !== 1) return { text: new CtxError("ONE_OF_INPUT", { names: INPUT_FIELDS.join(", ") }).toLine(), isError: true, sandboxBytes: 0 };
   try {
-    const got = await itemsOf(input, ctx);
+    // One deadline for the whole call: the page fetch and the climb that may follow it share it.
+    const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(EXEC_TIMEOUT_MS)]);
+    const got = await itemsOf(input, ctx, signal);
     const items = got.items.map((it) => ({ ...it, label: userLabel(it.label) }));
     const from = userLabel(got.from);
     // Steps 3-4: one sources row per text, written by ftsInsert in INDEX_WRITE_CHUNK batches.
@@ -143,6 +146,17 @@ async function handler(input: CtxIndexInput, ctx: ToolContext): Promise<ToolRepl
             notes.push("Raw HTML kept as \"" + rawLabel + "\" (" + raw.chunks + " chunk(s)); pass it as `source` to search the markup.");
             lastId = raw.sourceId;
             if (readable.words === 0 || readable.sparse) {
+              // The page is a JavaScript shell, so the HTML holds nothing to rank. A site that publishes its own
+              // markdown copy has the article the shell lacks; the page url stays the label either way.
+              const hit = it.base === undefined ? undefined : await climbShell(it.base, signal);
+              if (hit !== undefined && !isNearEmpty(hit.body)) {
+                notes.unshift("The page had no readable text; its markdown copy at " + hit.url + " was indexed instead.");
+                const alt = storeText(db, ctx.project, ctx.sessionId, it.sourceKind, it.label, hit.body, "md");
+                chunks += alt.chunks;
+                lastId = alt.sourceId;
+                sources += 1;
+                continue;
+              }
               notes.unshift("No readable text found in " + it.label + " (the page is client-rendered or empty); nothing was added to default search.");
               continue;
             }

@@ -166,6 +166,8 @@ export const EXEC_LANGUAGES = Object.freeze(["shell", "powershell", "javascript"
 export const SHELL_FAMILY: readonly string[] = Object.freeze(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
 export const PATHEXT_DEFAULT = ".COM;.EXE;.BAT;.CMD"; // impl/03 §2 step 3: Windows PATHEXT when the env var is unset
 export const FETCH_MAX_HOPS = 5; // impl/03 §6 step 5: redirect hops; one more is FETCH_FAILED
+// Response body cap for a url fetch: a larger body is FETCH_FAILED, so a huge endpoint cannot exhaust the parent's heap.
+export const FETCH_MAX_BYTES = 50 * 1024 * 1024;
 export const SOURCE_LABEL_MAX_CHARS = 80; // impl/04 §2.3 step 15, §4 step 7: label = "<tool>:" + first line of the code, at most 80 chars
 // D-1337-EXIT-SETTLE-1: appended to a ctx_execute reply when the command exited but a background process still held its output pipes.
 export const BACKGROUND_HOLD_NOTE = "note: the command ended while a background process still held its output; that process was stopped, so output it would write later does not exist.";

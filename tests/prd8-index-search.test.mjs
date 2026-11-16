@@ -38,6 +38,8 @@ import http, { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { safeFetch } from "../src/core/sandbox/fetch.ts";
+import { mdSiblingUrls, isMachineReadable, llmsTargetFor } from "../src/core/sandbox/ladder.ts";
+import { isNearEmpty } from "../src/core/index/html-text.ts";
 import { spawn, execFileSync, spawnSync } from "node:child_process";
 
 // Stage 1 (concurrent): the pure block, the HTML section and the parity section. None of them sets a proxy variable.
@@ -3144,7 +3146,7 @@ describe("PRD-v2 section 8 / ctx_index", () => {
   test("[M2] GP5/http-proxy-honored: ctx_index url goes to the proxy from env, SSRF-checked there (#1039, #476)", async () => {
     const root = mkdtempSync(join(tmpdir(), "cm-ix7-"));
     let hits = 0;
-    const proxy = createServer((req, res) => { hits += 1; res.end("x"); });
+    const proxy = createServer((_req, res) => { hits += 1; res.end("x"); });
     proxy.on("connection", () => { hits += 1; });
     await new Promise((r) => proxy.listen(0, "127.0.0.1", r));
     try {
@@ -3275,7 +3277,7 @@ describe("PRD-v2 section 8 / safeFetch", () => {
   async function countingProxy() {
     let hits = 0;
     const srv = createServer((req, res) => { hits += 1; res.end("proxied"); });
-    srv.on("connect", (req, sock) => { hits += 1; sock.destroy(); });
+    srv.on("connect", (_req, sock) => { hits += 1; sock.destroy(); });
     srv.on("connection", () => { hits += 1; });
     await new Promise((r) => srv.listen(0, "127.0.0.1", r));
     return { url: `http://127.0.0.1:${srv.address().port}`, hits: () => hits, close: () => new Promise((r) => srv.close(r)) };
@@ -3368,7 +3370,7 @@ describe("PRD-v2 section 8 / safeFetch", () => {
 
   test("D-SSRF-RANGES-1: a redirect to an IPv4-compatible loopback literal is blocked on its hop", async () => {
     let hits = 0;
-    const srv = createServer((req, res) => {
+    const srv = createServer((_req, res) => {
       hits += 1;
       res.writeHead(302, { location: "http://[::127.0.0.1]:" + srv.address().port + "/meta" });
       res.end();
@@ -3484,7 +3486,7 @@ describe("PRD-v2 section 8 / safeFetch", () => {
   });
 
   test("#1380: a non-2xx reply names the status and the host in one line", async () => {
-    const s = await uaServer((req, res) => { res.writeHead(403); res.end("forbidden"); return true; });
+    const s = await uaServer((_req, res) => { res.writeHead(403); res.end("forbidden"); return true; });
     try {
       await withEnv({}, () => assert.rejects(safeFetch("http://docs.parity.test:" + s.port + "/wiki/x", AbortSignal.timeout(5000)), (err) => {
         assert.equal(err.code, "FETCH_FAILED");
@@ -3500,5 +3502,229 @@ describe("PRD-v2 section 8 / safeFetch", () => {
         assert.equal(err.message, "Blocked private address 169.254.169.254. Fix: use a public URL.");
         return true;
       }));
+  });
+
+  // ---- fetch ladder (src/core/sandbox/ladder.ts). A client-rendered page carries no text to rank, so the site's
+  // own markdown copy of the page is fetched instead of the shell. The parity shim moves only the last hop.
+  const SHELL_HTML = "<!DOCTYPE html><html><head><title>Guide</title></head><body><div id=\"app\"></div><script>window.__NEXT=1</script></body></html>";
+  const GUIDE_MD = "# Guide\n\nharborlightladder is the deploy job name this document describes in enough words to be an article: it covers deployments, rollbacks, and how the pipeline runs them in order.\n";
+
+  async function ladderServer(routes) {
+    const seen = [];
+    const srv = createServer((req, res) => {
+      seen.push(req.url);
+      const r = routes[req.url];
+      if (r === undefined) { res.writeHead(404, { "content-type": "text/plain" }); res.end("no"); return; }
+      if (r.onHit !== undefined) r.onHit();
+      if (r.hang === true) { res.on("error", () => {}); return; }
+      res.writeHead(200, { "content-type": r.type });
+      res.end(r.body);
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    return { seen, port: srv.address().port, close: () => new Promise((r) => { srv.closeAllConnections(); srv.close(r); }) };
+  }
+
+  function ladderCtx(dir) {
+    const key = "3".repeat(16);
+    return {
+      project: { projectKey: key, projectDir: join(dir, "projects", key), dbPath: join(dir, "projects", key, "context.db"), worktree: dir, containmentRoot: dir, agent: "claude-code", source: "env:CLAUDE_PROJECT_DIR" },
+      sessionId: "s1", turn: 1, signal: new AbortController().signal,
+    };
+  }
+
+  test("ladder: mdSiblingUrls lists the .md candidates of a page path, and index.md alone at the root", () => {
+    assert.deepEqual(mdSiblingUrls("https://a.test/docs/intro.html"), ["https://a.test/docs/intro.md"]);
+    assert.deepEqual(mdSiblingUrls("https://a.test/docs/intro"), ["https://a.test/docs/intro.md", "https://a.test/docs/intro/index.md"]);
+    assert.deepEqual(mdSiblingUrls("https://a.test/docs/"), ["https://a.test/docs.md", "https://a.test/docs/index.md"]);
+    assert.deepEqual(mdSiblingUrls("https://a.test/"), ["https://a.test/index.md"]);
+  });
+
+  test("ladder: a 200 reply that is the HTML shell is not markdown, but a markdown page quoting HTML in a fence is", () => {
+    assert.equal(isMachineReadable("text/html; charset=utf-8", "# Title"), false);
+    assert.equal(isMachineReadable("", SHELL_HTML), false);
+    assert.equal(isMachineReadable("", "\uFEFF  <!DOCTYPE HTML><HTML>"), false);
+    assert.equal(isMachineReadable("", "<!-- generated -->\n<!DOCTYPE html><html></html>"), false);
+    assert.equal(isMachineReadable("application/xhtml+xml", "# Title"), false);
+    assert.equal(isMachineReadable("text/markdown", "# HTML basics\n\n```html\n<!DOCTYPE html>\n<html>\n```\n"), true);
+    assert.equal(isMachineReadable("text/plain", "   \n"), false);
+    // A comment that runs past the inspected prefix leaves nothing to judge, so the shell is not taken for an article.
+    assert.equal(isMachineReadable("", "<!--" + "x".repeat(5000) + "-->" + SHELL_HTML), false);
+  });
+
+  test("ladder: llmsTargetFor follows the entry for this page, and skips bad, already-tried and other-page entries", () => {
+    const page = "https://a.test/docs/intro";
+    assert.equal(llmsTargetFor("- [Intro](/docs/intro.md)", page, []), "https://a.test/docs/intro.md");
+    assert.equal(llmsTargetFor("- [Intro](intro.md)", page, []), "https://a.test/docs/intro.md");
+    assert.equal(llmsTargetFor("# Docs\njust prose", page, []), "");
+    assert.equal(llmsTargetFor("- [Intro](/docs/intro.md", page, []), "");
+    assert.equal(llmsTargetFor("- [X](/zdocs/intro.md)", page, []), "");
+    assert.equal(llmsTargetFor("- [Bad](http://[)\n- [Intro](/docs/intro.md)", page, []), "https://a.test/docs/intro.md");
+    assert.equal(llmsTargetFor("- [Intro](https://a.test/docs/intro)\n- [Intro md](https://a.test/docs/intro.md)", page, ["https://a.test/docs/intro.md"]), "");
+    // An index far past the first MB is not read: its tail would cost a split of millions of lines.
+    assert.equal(llmsTargetFor("x\n".repeat(600000) + "- [Intro](/docs/intro.md)", page, []), "");
+  });
+
+  test("ladder: a client-rendered page is indexed from its .md sibling, under the page's own label", async () => {
+    const s = await ladderServer({ "/guide": { type: "text/html", body: SHELL_HTML }, "/guide.md": { type: "text/markdown", body: GUIDE_MD } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = ladderCtx(root);
+      const url = "http://docs.parity.test:" + s.port + "/guide";
+      const index = await withEnv({}, () => ctxIndex.handler({ url }, ctx));
+      assert.equal(index.isError, false, index.text);
+      assert.ok(index.text.includes("markdown copy at " + url + ".md"), index.text);
+      const search = await ctxSearch.handler({ queries: ["harborlightladder"] }, ctx);
+      assert.ok(search.text.includes("harborlightladder"), "the markdown body is searchable: " + search.text.slice(0, 300));
+      assert.ok(search.text.includes(url), "the page url stays the label: " + search.text.slice(0, 200));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("ladder: a markdown reply too short to be an article is not one", () => {
+    assert.equal(isNearEmpty("# 404\n\nPage not found."), true);
+    assert.equal(isNearEmpty(GUIDE_MD), false);
+  });
+
+  test("ladder: a site that answers the page url with markdown needs no climb", async () => {
+    const s = await ladderServer({ "/page": { type: "text/markdown", body: GUIDE_MD } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = ladderCtx(root);
+      const url = "http://docs.parity.test:" + s.port + "/page";
+      const index = await withEnv({}, () => ctxIndex.handler({ url }, ctx));
+      assert.equal(index.isError, false, index.text);
+      assert.deepEqual(s.seen, ["/page"], "no sibling was asked for: " + s.seen.join(", "));
+      const search = await ctxSearch.handler({ queries: ["harborlightladder"] }, ctx);
+      assert.ok(search.text.includes("harborlightladder"), search.text.slice(0, 300));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("ladder: a page with readable text is indexed as it is, with no extra request", async () => {
+    const body = "<!DOCTYPE html><html><body><h1>Guide</h1><p>" + "harborlightladder is the deploy job name. ".repeat(30) + "</p></body></html>";
+    const s = await ladderServer({ "/page": { type: "text/html", body } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = ladderCtx(root);
+      const index = await withEnv({}, () => ctxIndex.handler({ url: "http://docs.parity.test:" + s.port + "/page" }, ctx));
+      assert.equal(index.isError, false, index.text);
+      assert.deepEqual(s.seen, ["/page"], "no climb for a readable page: " + s.seen.join(", "));
+      const search = await ctxSearch.handler({ queries: ["harborlightladder"] }, ctx);
+      assert.ok(search.text.includes("harborlightladder"), search.text.slice(0, 300));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("ladder: a cancel during the climb ends as the cancel, not as a page with no text", async () => {
+    const ac = new AbortController();
+    const s = await ladderServer({ "/page": { type: "text/html", body: SHELL_HTML }, "/page.md": { hang: true, onHit: () => ac.abort() } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = { ...ladderCtx(root), signal: ac.signal };
+      const index = await withEnv({}, () => ctxIndex.handler({ url: "http://docs.parity.test:" + s.port + "/page" }, ctx));
+      assert.ok(s.seen.includes("/page.md"), "the climb was reached: " + s.seen.join(", "));
+      assert.equal(index.isError, true, index.text);
+      assert.equal(index.text.includes("No readable text found"), false, index.text);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("ladder: a markdown copy too short to be an article is not indexed", async () => {
+    const junk = "# 404\n\nzonkmarlin not found here.";
+    const s = await ladderServer({ "/page": { type: "text/html", body: SHELL_HTML }, "/page.md": { type: "text/markdown", body: junk } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = ladderCtx(root);
+      const index = await withEnv({}, () => ctxIndex.handler({ url: "http://docs.parity.test:" + s.port + "/page" }, ctx));
+      assert.equal(index.isError, false, index.text);
+      assert.ok(s.seen.includes("/page.md"), "the climb was reached: " + s.seen.join(", "));
+      assert.ok(index.text.includes("No readable text found"), index.text);
+      assert.equal(index.text.includes("markdown copy at"), false, index.text);
+      const search = await ctxSearch.handler({ queries: ["zonkmarlin"] }, ctx);
+      assert.ok(search.text.includes("No hits"), "the junk copy is not searchable: " + search.text.slice(0, 200));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("ladder: with no .md sibling, the llms.txt entry that names the page is fetched", async () => {
+    const hit = await ladderServer({
+      "/guide": { type: "text/html", body: SHELL_HTML },
+      "/llms.txt": { type: "text/plain", body: "# Docs\n- [Guide](/docs/guide.md): the deploy guide\n" },
+      "/docs/guide.md": { type: "text/markdown", body: GUIDE_MD },
+    });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const ctx = ladderCtx(root);
+      const url = "http://docs.parity.test:" + hit.port + "/guide";
+      const index = await withEnv({}, () => ctxIndex.handler({ url }, ctx));
+      assert.equal(index.isError, false, index.text);
+      assert.ok(hit.seen.includes("/llms.txt"), "llms.txt was read: " + hit.seen.join(", "));
+      const search = await ctxSearch.handler({ queries: ["harborlightladder"] }, ctx);
+      assert.ok(search.text.includes("harborlightladder"), search.text.slice(0, 300));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await hit.close();
+    }
+  });
+
+  test("ladder: a page with no markdown copy anywhere keeps the no-readable-text note", async () => {
+    const s = await ladderServer({ "/bare": { type: "text/html", body: SHELL_HTML } });
+    const root = mkdtempSync(join(tmpdir(), "cm-ladder-"));
+    try {
+      const index = await withEnv({}, () => ctxIndex.handler({ url: "http://docs.parity.test:" + s.port + "/bare" }, ladderCtx(root)));
+      assert.equal(index.isError, false, index.text);
+      assert.ok(index.text.includes("No readable text found"), index.text);
+      assert.equal(index.text.includes("markdown copy"), false, index.text);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      await s.close();
+    }
+  });
+
+  test("safeFetch sends the caller's accept header, and */* when none is given", async () => {
+    const s = await uaServer();
+    try {
+      const out = await withEnv({}, () => safeFetch("http://docs.parity.test:" + s.port + "/page", AbortSignal.timeout(5000), "text/markdown, */*;q=0.5"));
+      assert.equal(JSON.parse(out.body.toString("utf8")).accept, "text/markdown, */*;q=0.5");
+      const dflt = await withEnv({}, () => safeFetch("http://docs.parity.test:" + s.port + "/page", AbortSignal.timeout(5000)));
+      assert.equal(JSON.parse(dflt.body.toString("utf8")).accept, "*/*");
+    } finally { await s.close(); }
+  });
+
+  test("safeFetch fails a body over FETCH_MAX_BYTES instead of buffering it all", async () => {
+    const chunk = Buffer.alloc(1 << 20, 0x61); // 1 MiB per write, so the cap is crossed without one huge allocation
+    const s = await uaServer((_req, res) => {
+      res.on("error", () => {}); // the client destroys the response at the cap
+      res.writeHead(200, { "content-type": "text/plain" });
+      let sent = 0;
+      const pump = () => {
+        while (sent <= C.FETCH_MAX_BYTES) {
+          sent += chunk.length;
+          if (!res.write(chunk)) { res.once("drain", pump); return; }
+        }
+        res.end();
+      };
+      pump();
+      return true;
+    });
+    try {
+      await withEnv({}, () => assert.rejects(
+        safeFetch("http://docs.parity.test:" + s.port + "/huge", AbortSignal.timeout(60000)),
+        (err) => {
+          assert.equal(err.message, "Fetch failed: ERR_RESPONSE_TOO_LARGE. Fix: check the URL or proxy.");
+          return true;
+        },
+      ));
+    } finally { await s.close(); }
   });
 });

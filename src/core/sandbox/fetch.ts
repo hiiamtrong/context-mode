@@ -9,7 +9,7 @@ import { BlockList, isIP } from "node:net";
 import type { Socket } from "node:net";
 import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
-import { D1_PACKAGE_FILE, FETCH_MAX_HOPS } from "../contracts/constants.ts";
+import { D1_PACKAGE_FILE, FETCH_MAX_BYTES, FETCH_MAX_HOPS } from "../contracts/constants.ts";
 import { CtxError } from "../contracts/errors.ts";
 import { ownBundleDir } from "../ops/bundle-dir.ts";
 
@@ -46,7 +46,7 @@ const STATUS_REDIRECT: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 const UA_HOME = "https://github.com/mksglu/context-mode";
 const UA_DEV_VERSION = "dev";
 let namedHeaders: Readonly<Record<string, string>> | undefined;
-function baseHeaders(): Readonly<Record<string, string>> {
+function baseHeaders(accept: string): Readonly<Record<string, string>> {
   if (namedHeaders === undefined) {
     let version = UA_DEV_VERSION;
     try {
@@ -55,9 +55,9 @@ function baseHeaders(): Readonly<Record<string, string>> {
     } catch {
       // no package.json next to the bundle: the dev tree
     }
-    namedHeaders = Object.freeze({ "user-agent": "context-mode/" + version + " (+" + UA_HOME + ")", accept: "*/*" });
+    namedHeaders = Object.freeze({ "user-agent": "context-mode/" + version + " (+" + UA_HOME + ")" });
   }
-  return namedHeaders;
+  return { ...namedHeaders, accept };
 }
 
 type Target = { host: string; port: number; address: string };
@@ -184,7 +184,7 @@ function tlsName(host: string): string | undefined {
 }
 
 // Step 4: one request on the checked address; through the proxy when one was picked.
-function request(u: URL, conn: Target, proxy: Proxy | undefined, signal: AbortSignal): Promise<http.IncomingMessage> {
+function request(u: URL, conn: Target, proxy: Proxy | undefined, signal: AbortSignal, accept: string): Promise<http.IncomingMessage> {
   const host = bare(u.hostname);
   const port = u.port === "" ? defaultPort(u.protocol) : Number(u.port);
   const path = u.pathname + u.search;
@@ -192,12 +192,12 @@ function request(u: URL, conn: Target, proxy: Proxy | undefined, signal: AbortSi
     const onErr = (err: unknown) => reject(fail(causeCode(err)));
     if (proxy === undefined) {
       const mod = u.protocol === "https:" ? https : http;
-      const req = mod.request({ host: conn.address, port, path, signal, servername: tlsName(host), headers: { ...baseHeaders(), host: u.host } });
+      const req = mod.request({ host: conn.address, port, path, signal, servername: tlsName(host), headers: { ...baseHeaders(accept), host: u.host } });
       req.on("response", resolve).on("error", onErr).end();
       return;
     }
-    const proxyHeaders: Record<string, string> = proxy.auth === undefined ? { ...baseHeaders() }
-      : { ...baseHeaders(), "proxy-authorization": proxy.auth };
+    const proxyHeaders: Record<string, string> = proxy.auth === undefined ? { ...baseHeaders(accept) }
+      : { ...baseHeaders(accept), "proxy-authorization": proxy.auth };
     if (u.protocol === "http:") {
       const req = http.request({ host: conn.address, port: conn.port, path: u.href, signal, headers: { host: u.host, ...proxyHeaders } });
       req.on("response", resolve).on("error", onErr).end();
@@ -213,7 +213,7 @@ function request(u: URL, conn: Target, proxy: Proxy | undefined, signal: AbortSi
         return;
       }
       const req = https.request({
-        host, port, path, signal, headers: { ...baseHeaders(), host: u.host },
+        host, port, path, signal, headers: { ...baseHeaders(accept), host: u.host },
         createConnection: () => tlsConnect({ socket, host, servername: tlsName(host) }),
       });
       req.on("response", resolve).on("error", onErr).end();
@@ -225,14 +225,25 @@ function request(u: URL, conn: Target, proxy: Proxy | undefined, signal: AbortSi
 function readBody(res: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const parts: Buffer[] = [];
-    res.on("data", (b: Buffer) => parts.push(b));
+    let size = 0;
+    res.on("data", (b: Buffer) => {
+      size += b.length;
+      if (size > FETCH_MAX_BYTES) {
+        // The reject comes first: destroy() can emit "error" synchronously, and the first settlement wins, so the
+        // caller would otherwise be told ECONNRESET instead of the cap it actually hit.
+        reject(fail("ERR_RESPONSE_TOO_LARGE"));
+        res.destroy();
+        return;
+      }
+      parts.push(b);
+    });
     res.on("end", () => resolve(Buffer.concat(parts)));
     res.on("error", (err) => reject(fail(causeCode(err))));
     res.on("aborted", () => reject(fail("ECONNRESET")));
   });
 }
 
-export async function safeFetch(url: string, signal: AbortSignal): Promise<{ body: Buffer; contentType: string; finalUrl: string }> {
+export async function safeFetch(url: string, signal: AbortSignal, accept = "*/*"): Promise<{ body: Buffer; contentType: string; finalUrl: string }> {
   let current = parseUrl(url);
   for (let hop = 0; ; hop += 1) {
     if (signal.aborted) throw fail("ABORT_ERR");
@@ -241,7 +252,7 @@ export async function safeFetch(url: string, signal: AbortSignal): Promise<{ bod
     const origin = bare(current.hostname);
     if (proxy !== undefined && isIP(origin) !== 0) checkAddress(origin, origin);
     const conn = await resolveTarget(proxy === undefined ? current : proxy.url, signal);
-    const res = await request(current, conn, proxy, signal);
+    const res = await request(current, conn, proxy, signal, accept);
     const status = res.statusCode ?? 0;
     const location = res.headers.location;
     if (STATUS_REDIRECT.has(status) && location !== undefined) {

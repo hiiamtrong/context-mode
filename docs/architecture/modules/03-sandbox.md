@@ -10,6 +10,7 @@ Files, in build order (each file only imports files above it in this list, plus 
 4. `src/core/sandbox/kill.ts`
 5. `src/core/sandbox/spawn.ts`
 6. `src/core/sandbox/fetch.ts`
+7. `src/core/sandbox/ladder.ts`
 
 Rule for every file: no literal numbers — use the named constant. No regex for parsing (00 rule list, TECH-SPEC §11). `shell: false` always (PRD §8, GP4, TECH-SPEC GP4 row).
 
@@ -249,13 +250,14 @@ TECH-SPEC GP4 row: "exit class; … env passed via spawn env; … deleted cwd; �
 ### Export
 
 ```ts
-export function safeFetch(url: string, signal: AbortSignal): Promise<{ body: Buffer; contentType: string; finalUrl: string }>;
+export function safeFetch(url: string, signal: AbortSignal, accept?: string): Promise<{ body: Buffer; contentType: string; finalUrl: string }>;
 ```
 
 ### Inputs
 
 - `url`: the URL to fetch (from `ctx_index`'s URL-source path, outside this module).
 - `signal`: caller's `AbortSignal` (same cancel path as `runProcess`).
+- `accept`: the request's `Accept` header. Absent → `"*/*"`, the page request. The ladder (`ladder.ts`) passes its markdown list.
 
 ### Output
 
@@ -284,6 +286,41 @@ None named in 00 §3.2 for this file; the private-range list in step 3 is fixed 
 ### E2E case
 
 TECH-SPEC GP5 row, clauses "proxy env — the SSRF check runs on the resolved proxy target, in the same process as the fetch, after proxy env vars are applied, never as a separate parent pre-check (closes v1 #476's gap)" and "`ctx_fetch_and_index` on an unreachable URL returns only the one-line error cause (no raw Node stack), same rule as GP4's #1135 case". ADR-0017 `covers`: `src/core/sandbox/`.
+
+---
+
+## 7. `src/core/sandbox/ladder.ts`
+
+### Export
+
+```ts
+export interface LadderHit { body: string; url: string }
+export function mdSiblingUrls(pageUrl: string): string[];
+export function isMachineReadable(contentType: string, body: string): boolean;
+export function llmsTargetFor(body: string, pageUrl: string, tried: readonly string[]): string;
+export function climbShell(pageUrl: string, signal: AbortSignal): Promise<LadderHit | undefined>;
+```
+
+### Inputs
+
+- `pageUrl`: the `finalUrl` of a page whose HTML had no readable text.
+- `signal`: the caller's deadline/cancel signal, shared with the page fetch that found the shell.
+
+### Output
+
+`{ body, url }` of the site's own markdown copy of the page, or `undefined` when the site publishes none. `url` is the address that answered, after redirects.
+
+### Steps
+
+1. For each candidate from `mdSiblingUrls` (`.html` → sibling `.md`; trailing `/` → `<path>.md`, `<path>index.md`; bare path → `<path>.md`, `<path>/index.md`; root → `index.md` only), fetch with the markdown `Accept` and keep it only when `isMachineReadable`.
+2. Fetch `<origin>/llms.txt`, keeping it only when `isMachineReadable`, and read at most `LLMS_MAX_CHARS` of it.
+3. `llmsTargetFor` returns the first entry whose path names this page at a segment boundary, is not the page itself, and was not already tried; fetch it and keep it only when `isMachineReadable`.
+
+`isMachineReadable` rejects the HTML shell a server returns for a missing `.md` (by content type and by markers at the start of the body, skipping leading comments) and an empty reply. Whether the result is long enough to be an article is `isNearEmpty` (`index/html-text.ts`), applied by `tools-index`, so this file imports `./fetch.ts` only and stays in the sandbox cell of 00 §2.
+
+### Assumption
+
+- AS6 — a site with no `.md` sibling and no `llms.txt` entry is not an error. The climb ends with `undefined` and `ctx_index` keeps its "no readable text" reply; the raw HTML stays indexed under `<label> (raw)`.
 
 ---
 

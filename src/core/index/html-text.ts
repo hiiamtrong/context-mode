@@ -370,6 +370,15 @@ function wordCount(text: string): number {
 const SPARSE_MAX_WORDS = 20;
 const SPARSE_RATIO = 20;
 
+// A body with SPARSE_MAX_WORDS words shows them in its opening, so the count reads a bounded prefix: a 50 MB body
+// would otherwise be copied whole for a number its first page already decides.
+const NEAR_EMPTY_PROBE_CHARS = 65536;
+
+/** Only the word-count half of the sparse rule: a markdown copy has no HTML to compare its length with. */
+export function isNearEmpty(text: string): boolean {
+  return wordCount(text.slice(0, NEAR_EMPTY_PROBE_CHARS)) < SPARSE_MAX_WORDS;
+}
+
 // The page's own content root: <main>, else the only <article>, else <body>, else the whole document.
 function contentRoot(children: ChildNode[]): ChildNode[] {
   const main = DomUtils.findOne((e) => e.name === "main", children, true);
