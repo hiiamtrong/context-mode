@@ -18,7 +18,6 @@ const EXTENSIONS_KEY = "extensions";
 const PROJECT_DIR = ".pi";
 const TRUST_FILE = "trust.json";
 const ALWAYS = "always";
-const SOURCE_PREFIXES = ["npm:", "git:"];
 
 type Env = Record<string, string | undefined>;
 interface Source { file: string; doc: unknown }
@@ -31,34 +30,19 @@ function load(file: string): Source | undefined {
 
 const real = (p: string): string => { try { return realpathSync(p); } catch { return path.resolve(p); } };
 
-/** Index of the @ that opens a version/ref, else -1. A ref may contain "/" (".../context-mode@port/v2"), so the ref comes off
- *  the whole source first. Not a ref: an @ at index 0 or right after "/" (an npm scope), and an @ inside the ssh form
- *  "user@host:path" (a ":" before the next "/"). */
-function refAt(s: string): number {
-  for (let i = 1; i < s.length; i += 1) {
-    if (s[i] !== "@" || s[i - 1] === "/") continue;
-    const rest = s.slice(i + 1);
-    const colon = rest.indexOf(":");
-    const slash = rest.indexOf("/");
-    if (colon >= 0 && (slash < 0 || colon < slash)) continue;
-    return i;
-  }
-  return -1;
-}
-
-/** Last path segment of a packages[] source without a scheme, a @version/@ref or .git: "git:github.com/a/context-mode@release" -> "context-mode". */
-function sourceName(source: string): string {
-  let s = source;
-  for (const p of SOURCE_PREFIXES) if (s.startsWith(p)) s = s.slice(p.length);
-  const at = refAt(s);
-  if (at > 0) s = s.slice(0, at);
-  const last = s.split("/").pop() ?? "";
-  return last.endsWith(".git") ? last.slice(0, -4) : last;
-}
-
+/** Is this packages[] source this package? The repo name is matched with a boundary, not parsed as a path: a ref may
+ *  contain "/", an npm scope and an ssh host both start with "@", and a token URL carries an "@" mid-source. */
 function isOwn(source: unknown, pkgDir: string): boolean {
   if (typeof source !== "string") return false;
-  return real(source) === real(pkgDir) || sourceName(source) === SERVER_KEY;
+  if (real(source) === real(pkgDir)) return true;
+  for (const sep of ["/", "\\", ":"]) {
+    const at = source.indexOf(sep + SERVER_KEY);
+    if (at < 0) continue;
+    const rest = source.slice(at + sep.length + SERVER_KEY.length);
+    const tail = rest.startsWith(".git") ? rest.slice(4) : rest;
+    if (tail === "" || tail.startsWith("@") || tail.startsWith("#")) return true;
+  }
+  return source === SERVER_KEY;
 }
 
 interface Entry { source: Source; patterns: string[] | undefined }
